@@ -23,6 +23,7 @@ class DisplaysViewModel: ObservableObject {
     private enum PersistenceKeys {
         static let disabledDisplayIDsForRecovery = "DisabledDisplayIDsForRecovery"
         static let pendingReactivationDisplayIDs = "PendingReactivationDisplayIDs"
+        static let savedBuiltInDisplayIDForRecovery = "SavedBuiltInDisplayIDForRecovery"
     }
 
     private enum DDCConstants {
@@ -56,6 +57,7 @@ class DisplaysViewModel: ObservableObject {
     private var ddcMissingCountByDisplayIdentity: [DisplayIdentity: Int] = [:]
     private var isFetchingDisplays = false
     private var pendingDisplayRefresh = false
+    private var restoreCheckWorkItem: DispatchWorkItem?
 #if DEBUG
     private let isVerboseDDCDebugEnabled = ProcessInfo.processInfo.environment["LIGHTSOUT_VERBOSE_DDC_DEBUG"] == "1"
     private var pendingDDCDebugStages: [CGDirectDisplayID: [String]] = [:]
@@ -104,9 +106,17 @@ class DisplaysViewModel: ObservableObject {
     /// Called after display configuration changes complete.
     var didChangeDisplays: (() -> Void)?
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, fetchOnInit: Bool = true) {
         self.defaults = defaults
-        fetchDisplays()
+        registerDisplayReconfigurationCallback()
+        if fetchOnInit {
+            fetchDisplays()
+        }
+    }
+
+    deinit {
+        restoreCheckWorkItem?.cancel()
+        CGDisplayRemoveReconfigurationCallback(displayReconfigurationCallback, Unmanaged.passUnretained(self).toOpaque())
     }
 
     func fetchDisplays() {
@@ -218,6 +228,9 @@ class DisplaysViewModel: ObservableObject {
         var newDisplays = Set(probe.onlineDisplayIDs.compactMap { displayID -> DisplayInfo? in
             let displayName = resolvedDisplayName(for: displayID, displayNamesByID: displayNamesByID)
             let isBuiltIn = CGDisplayIsBuiltin(displayID) != 0
+            if isBuiltIn {
+                persistSavedBuiltInDisplayID(displayID)
+            }
             let isManagedHidden = persistedDisabledDisplayIDs.contains(displayID)
             let displayIdentity = DisplayIdentity(displayID: displayID, displayName: displayName)
             let transportSnapshot = probe.transportByDisplayID[displayID]
@@ -451,46 +464,138 @@ class DisplaysViewModel: ObservableObject {
         }
     }
 
-    func resetAllDisplays() {
+    func restoreAllDisplays() {
         let persistedDisabledDisplayIDs = loadDisabledDisplayIDsForRecovery()
+        let pendingReactivationDisplayIDs = loadPendingReactivationDisplayIDs()
+        let candidateIDs = restoreCandidateIDs(persistedDisabledDisplayIDs: persistedDisabledDisplayIDs)
 
-        for display in displays {
-            try? turnOnDisplay(display: display)
+        var remainingDisabledDisplayIDs = loadDisabledDisplayIDsForRecovery().union(persistedDisabledDisplayIDs)
+        var remainingPendingReactivationDisplayIDs = loadPendingReactivationDisplayIDs().union(pendingReactivationDisplayIDs)
+
+        for displayID in candidateIDs {
+            do {
+                try reconnectDisplay(displayID: displayID)
+                remainingDisabledDisplayIDs.remove(displayID)
+                remainingPendingReactivationDisplayIDs.remove(displayID)
+            } catch {
+                continue
+            }
         }
 
         CGDisplayRestoreColorSyncSettings()
         CGRestorePermanentDisplayConfiguration()
 
-        var remainingDisabledDisplayIDs = loadDisabledDisplayIDsForRecovery().union(persistedDisabledDisplayIDs)
-        for displayID in persistedDisabledDisplayIDs {
-            do {
-                try reconnectDisplay(displayID: displayID)
-                remainingDisabledDisplayIDs.remove(displayID)
-            } catch {
-                continue
-            }
-        }
-
         persistDisabledDisplayIDsForRecovery(remainingDisabledDisplayIDs)
+        persistPendingReactivationDisplayIDs(remainingPendingReactivationDisplayIDs)
         fetchDisplays()
     }
 
-    func recoverDisabledDisplaysFromPreviousSessionIfNeeded() {
-        let disabledDisplayIDs = loadDisabledDisplayIDsForRecovery()
-        guard !disabledDisplayIDs.isEmpty else { return }
+    func resetAllDisplays() {
+        restoreAllDisplays()
+    }
 
-        var remainingDisabledDisplayIDs = disabledDisplayIDs
-        for displayID in disabledDisplayIDs {
-            do {
-                try reconnectDisplay(displayID: displayID)
-                remainingDisabledDisplayIDs.remove(displayID)
-            } catch {
-                continue
+    func recoverDisabledDisplaysFromPreviousSessionIfNeeded() {
+        restoreAllDisplays()
+    }
+
+    private func restoreCandidateIDs(persistedDisabledDisplayIDs: Set<CGDirectDisplayID>) -> [CGDirectDisplayID] {
+        let disconnectedDisplayIDs = Set(displays.filter { $0.state.isOff }.map(\.id))
+            .union(loadPendingReactivationDisplayIDs())
+        let onlineDisplayIDs = currentOnlineDisplayIDs()
+        let activeDisplayIDs = currentActiveDisplayIDs()
+        let builtInFallbackDisplayIDs = builtInFallbackDisplayIDs()
+
+        let snapshot = RestoreCandidateSnapshot(
+            persistedDisabledDisplayIDs: persistedDisabledDisplayIDs,
+            disconnectedDisplayIDs: disconnectedDisplayIDs,
+            onlineDisplayIDs: onlineDisplayIDs,
+            activeDisplayIDs: activeDisplayIDs,
+            savedBuiltInDisplayID: loadSavedBuiltInDisplayID(),
+            fallbackDisplayID: 1,
+            builtInFallbackDisplayIDs: builtInFallbackDisplayIDs
+        )
+
+        return RestoreCandidateAggregator.candidateIDs(from: snapshot)
+    }
+
+    private func currentActiveDisplayIDs() -> Set<CGDirectDisplayID> {
+        var displayCount: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &displayCount)
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetActiveDisplayList(displayCount, &displayIDs, &displayCount)
+        return Set(displayIDs.prefix(Int(displayCount)))
+    }
+
+    private func currentOnlineDisplayIDs() -> Set<CGDirectDisplayID> {
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &displayCount)
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
+        return Set(displayIDs.prefix(Int(displayCount)))
+    }
+
+    private func activePhysicalExternalDisplayIDs(activeDisplayIDs: Set<CGDirectDisplayID>) -> Set<CGDirectDisplayID> {
+        Set(displays.compactMap { display in
+            guard activeDisplayIDs.contains(display.id),
+                  !display.isBuiltIn,
+                  display.state == .active,
+                  display.isAvailable,
+                  !isPlaceholderDisplayName(display.name) else {
+                return nil
+            }
+            return display.id
+        })
+    }
+
+    private func builtInFallbackDisplayIDs() -> [CGDirectDisplayID] {
+        (1...10).compactMap { rawID in
+            let displayID = CGDirectDisplayID(rawID)
+            return CGDisplayIsBuiltin(displayID) != 0 ? displayID : nil
+        }
+    }
+
+    private func registerDisplayReconfigurationCallback() {
+        let status = CGDisplayRegisterReconfigurationCallback(displayReconfigurationCallback, Unmanaged.passUnretained(self).toOpaque())
+        if status != .success {
+            print("LightsOut failed to register display reconfiguration callback: \(status)")
+        }
+    }
+
+    fileprivate func handleDisplayReconfiguration(
+        display: CGDirectDisplayID,
+        flags: CGDisplayChangeSummaryFlags
+    ) {
+        guard !flags.contains(.beginConfigurationFlag) else {
+            return
+        }
+
+        let safetyFlags = ReconfigurationFlags(flags)
+        restoreCheckWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+
+            let disconnectedDisplayIDs = loadDisabledDisplayIDsForRecovery()
+                .union(displays.filter { $0.state.isOff }.map(\.id))
+                .union(loadPendingReactivationDisplayIDs())
+            let activeDisplayIDs = currentActiveDisplayIDs()
+            let snapshot = ReconfigurationSnapshot(
+                flags: safetyFlags,
+                activeDisplayIDs: activeDisplayIDs,
+                activePhysicalExternalDisplayIDs: activePhysicalExternalDisplayIDs(activeDisplayIDs: activeDisplayIDs),
+                onlineDisplayIDs: currentOnlineDisplayIDs(),
+                disconnectedDisplayIDs: disconnectedDisplayIDs,
+                builtInDisplayID: loadSavedBuiltInDisplayID()
+            )
+
+            if ReconfigurationDangerPolicy.shouldRestoreAllDisplays(after: snapshot) {
+                restoreAllDisplays()
+            } else {
+                fetchDisplays()
             }
         }
 
-        persistDisabledDisplayIDsForRecovery(remainingDisabledDisplayIDs)
-        fetchDisplays()
+        restoreCheckWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: workItem)
     }
 
     func markDisplaysBusy(_ displayIDs: Set<CGDirectDisplayID>) {
@@ -2234,12 +2339,15 @@ extension DisplaysViewModel {
     }
 
     private func canDisable(display: DisplayInfo) -> Bool {
-        guard display.state == .active else {
-            return false
+        let activeDisplayIDs = currentActiveDisplayIDs()
+        let safetySnapshots = displays.map { candidate in
+            DisplaySafetySnapshot(
+                id: candidate.id,
+                isActive: activeDisplayIDs.isEmpty ? candidate.state == .active : activeDisplayIDs.contains(candidate.id)
+            )
         }
 
-        let activeCount = displays.filter { $0.state == .active }.count
-        return activeCount > 1
+        return DisplaySafetyPolicy.disconnectPreflight(targetID: display.id, displays: safetySnapshots) == .allowed
     }
 
     private func loadDisabledDisplayIDsForRecovery() -> Set<CGDirectDisplayID> {
@@ -2269,6 +2377,15 @@ extension DisplaysViewModel {
 
     private func clearDisabledDisplayIDsForRecovery() {
         defaults.removeObject(forKey: PersistenceKeys.disabledDisplayIDsForRecovery)
+    }
+
+    private func loadSavedBuiltInDisplayID() -> CGDirectDisplayID? {
+        let rawValue = defaults.integer(forKey: PersistenceKeys.savedBuiltInDisplayIDForRecovery)
+        return rawValue > 0 ? CGDirectDisplayID(rawValue) : nil
+    }
+
+    private func persistSavedBuiltInDisplayID(_ displayID: CGDirectDisplayID) {
+        defaults.set(Int(displayID), forKey: PersistenceKeys.savedBuiltInDisplayIDForRecovery)
     }
 
     private func loadPendingReactivationDisplayIDs() -> Set<CGDirectDisplayID> {
@@ -2326,4 +2443,45 @@ extension NSScreen {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         return (deviceDescription[key] as? CGDirectDisplayID) ?? 0
     }
+}
+
+private extension ReconfigurationFlags {
+    init(_ flags: CGDisplayChangeSummaryFlags) {
+        var result: ReconfigurationFlags = []
+
+        if flags.contains(.beginConfigurationFlag) {
+            result.insert(.begin)
+        }
+
+        if flags.contains(.removeFlag) {
+            result.insert(.removed)
+        }
+
+        if flags.contains(.disabledFlag) {
+            result.insert(.disabled)
+        }
+
+        if flags.contains(.setMainFlag) {
+            result.insert(.setMain)
+        }
+
+        if flags.contains(.addFlag) {
+            result.insert(.added)
+        }
+
+        self = result
+    }
+}
+
+private func displayReconfigurationCallback(
+    display: CGDirectDisplayID,
+    flags: CGDisplayChangeSummaryFlags,
+    userInfo: UnsafeMutableRawPointer?
+) {
+    guard let userInfo else {
+        return
+    }
+
+    let viewModel = Unmanaged<DisplaysViewModel>.fromOpaque(userInfo).takeUnretainedValue()
+    viewModel.handleDisplayReconfiguration(display: display, flags: flags)
 }

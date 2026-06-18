@@ -296,7 +296,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 2.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Steelworks.LightsOut;
+				PRODUCT_BUNDLE_IDENTIFIER = com.overdrive.lights-out.safe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "LightsOut/LightsOut-Bridging-Header.h";
@@ -331,7 +331,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 2.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Steelworks.LightsOut;
+				PRODUCT_BUNDLE_IDENTIFIER = com.overdrive.lights-out.safe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "LightsOut/LightsOut-Bridging-Header.h";

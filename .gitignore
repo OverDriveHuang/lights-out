@@ -4,3 +4,5 @@
 *.xcuserstate
 .DS_Store
 .claude
+.build/
+.swiftpm/

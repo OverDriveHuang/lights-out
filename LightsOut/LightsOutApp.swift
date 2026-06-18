@@ -24,8 +24,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuRefreshTimer: Timer?
     var eventMonitor: Any?
     var screenParametersObserver: Any?
-    let displaysViewModel = DisplaysViewModel()
+    let displaysViewModel = DisplaysViewModel(fetchOnInit: false)
     var contextMenuManager: ContextMenuManager!
+    private var restoreHotKey: GlobalRestoreHotKey?
     private var preservedPopoverState: PreservedPopoverState?
     private let menuRefreshInterval: TimeInterval = 3
 
@@ -72,11 +73,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        displaysViewModel.recoverDisabledDisplaysFromPreviousSessionIfNeeded()
+        restoreHotKey = GlobalRestoreHotKey { [weak self] in
+            self?.displaysViewModel.restoreAllDisplays()
+        }
+        if restoreHotKey == nil {
+            print("LightsOut failed to register Control-Command-P Restore All Displays hotkey.")
+        }
+
+        displaysViewModel.restoreAllDisplays()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        displaysViewModel.resetAllDisplays()
+        displaysViewModel.restoreAllDisplays()
     }
 
     @objc func handleClick(_ sender: NSStatusBarButton) {
