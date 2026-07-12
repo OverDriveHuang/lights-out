@@ -37,6 +37,20 @@ echo
 echo "== Xcode availability =="
 if xcodebuild -version >/tmp/lightsout-xcode-version.txt 2>&1; then
   cat /tmp/lightsout-xcode-version.txt
+
+  echo
+  echo "== Optimized app Release build =="
+  release_derived_data="$(mktemp -d "${TMPDIR:-/tmp}/lightsout-release-check.XXXXXX")"
+  trap 'rm -rf "$release_derived_data"' EXIT
+  xcodebuild -quiet \
+    -project LightsOut.xcodeproj \
+    -scheme LightsOut \
+    -configuration Release \
+    -derivedDataPath "$release_derived_data" \
+    CODE_SIGNING_ALLOWED=NO \
+    build
+  rm -rf "$release_derived_data"
+  trap - EXIT
 else
   cat /tmp/lightsout-xcode-version.txt
   echo "Full Xcode is not selected; app build must wait."
