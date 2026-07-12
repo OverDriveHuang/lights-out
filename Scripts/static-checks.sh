@@ -14,17 +14,24 @@ echo
 echo "== Typecheck pure safety modules =="
 swiftc -typecheck \
   LightsOut/Services/RestoreCandidateAggregator.swift \
+  LightsOut/Services/DisplayLayoutModels.swift \
+  LightsOut/Services/PersistentDisplayIdentity.swift \
+  LightsOut/Services/DisplayLayoutPolicy.swift \
   LightsOut/Services/DisplaySafetyPolicy.swift \
   LightsOut/Services/ReconfigurationDangerPolicy.swift
 
 echo
 echo "== Typecheck hotkey helper =="
-swiftc -typecheck LightsOut/GlobalRestoreHotKey.swift
+swiftc -typecheck LightsOut/GlobalDisplayLayoutHotKey.swift
 
 echo
 echo "== Hotkey binding check =="
-grep -q 'controlKey | cmdKey' LightsOut/GlobalRestoreHotKey.swift
-! grep -q 'optionKey | cmdKey' LightsOut/GlobalRestoreHotKey.swift
+rg -q 'controlKey \| cmdKey' LightsOut/GlobalDisplayLayoutHotKey.swift
+! rg -q 'optionKey \| cmdKey' LightsOut/GlobalDisplayLayoutHotKey.swift
+rg -q 'kEventHotKeyReleased' LightsOut/GlobalDisplayLayoutHotKey.swift
+rg -q 'flagsState' LightsOut/GlobalDisplayLayoutHotKey.swift
+rg -q 'keyState' LightsOut/GlobalDisplayLayoutHotKey.swift
+! rg -q '\(1\.\.\.10\)' LightsOut/DisplaysViewModel.swift
 
 echo
 echo "== Xcode availability =="

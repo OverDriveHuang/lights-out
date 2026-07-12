@@ -39,6 +39,27 @@ public struct ReconfigurationSnapshot: Equatable {
     }
 }
 
+/// Pure timing model for coalescing a burst of display-topology notifications.
+/// Each new event moves the trailing-edge deadline, while `maximumDelay` keeps
+/// a noisy device from postponing reconciliation forever.
+public struct DisplayTopologyEventBurst: Equatable {
+    public private(set) var firstEventTime: TimeInterval
+    public private(set) var lastEventTime: TimeInterval
+
+    public init(firstEventTime: TimeInterval) {
+        self.firstEventTime = firstEventTime
+        lastEventTime = firstEventTime
+    }
+
+    public mutating func recordEvent(at time: TimeInterval) {
+        lastEventTime = max(lastEventTime, time)
+    }
+
+    public func fireTime(quietPeriod: TimeInterval, maximumDelay: TimeInterval) -> TimeInterval {
+        min(lastEventTime + quietPeriod, firstEventTime + maximumDelay)
+    }
+}
+
 public enum ReconfigurationDangerPolicy {
     public static func shouldRestoreAllDisplays(after snapshot: ReconfigurationSnapshot) -> Bool {
         guard !snapshot.flags.contains(.begin) else {
@@ -54,11 +75,12 @@ public enum ReconfigurationDangerPolicy {
             return false
         }
 
-        if let builtInDisplayID = snapshot.builtInDisplayID,
-           snapshot.disconnectedDisplayIDs.contains(builtInDisplayID) {
-            return snapshot.activePhysicalExternalDisplayIDs.isEmpty
-        }
+        let hasActiveBuiltInDisplay = snapshot.builtInDisplayID.map {
+            snapshot.activeDisplayIDs.contains($0)
+        } ?? false
+        let hasActivePhysicalDisplay = hasActiveBuiltInDisplay
+            || !snapshot.activePhysicalExternalDisplayIDs.isEmpty
 
-        return snapshot.activeDisplayIDs.isEmpty
+        return !hasActivePhysicalDisplay
     }
 }

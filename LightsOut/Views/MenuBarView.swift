@@ -3,6 +3,7 @@ import LaunchAtLogin
 
 struct MenuBarView: View {
     @EnvironmentObject var viewModel: DisplaysViewModel
+    @EnvironmentObject var layoutController: DisplayLayoutController
     @State private var isLoading: Bool = false
     @AppStorage("ShowStartupPrompt") private var showStartupPrompt: Bool = true
 
@@ -10,6 +11,7 @@ struct MenuBarView: View {
         ZStack {
             ContentView(isLoading: $isLoading)
                 .environmentObject(viewModel)
+                .environmentObject(layoutController)
                 .disabled(isLoading)
                 .opacity(isLoading ? 0.5 : 1.0)
 
@@ -60,15 +62,15 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MenuBarHeader(isLoading: $isLoading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 12)
-
-            Divider()
-
             DisplayListView()
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
+
+            Divider()
+
+            MenuBarHeader(isLoading: $isLoading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 12)
         }
         .padding(.horizontal, 14)
 
@@ -76,14 +78,18 @@ struct ContentView: View {
 }
 
 #Preview("MenuBarView") {
+    let viewModel = DisplaysViewModel(fetchOnInit: false)
     MenuBarView()
-        .environmentObject(DisplaysViewModel())
+        .environmentObject(viewModel)
+        .environmentObject(DisplayLayoutController(displaysViewModel: viewModel))
         .environmentObject(ErrorHandler())
 }
 
 #Preview("ContentView") {
+    let viewModel = DisplaysViewModel(fetchOnInit: false)
     ContentView(isLoading: .constant(false))
-        .environmentObject(DisplaysViewModel())
+        .environmentObject(viewModel)
+        .environmentObject(DisplayLayoutController(displaysViewModel: viewModel))
         .environmentObject(ErrorHandler())
         .frame(width: 372)
 }

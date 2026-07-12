@@ -39,15 +39,19 @@ public enum RestoreCandidateAggregator {
         candidates.append(contentsOf: snapshot.disconnectedDisplayIDs.sorted())
         candidates.append(contentsOf: onlineButInactiveDisplayIDs.sorted())
 
-        if let savedBuiltInDisplayID = snapshot.savedBuiltInDisplayID {
+        if let savedBuiltInDisplayID = snapshot.savedBuiltInDisplayID,
+           !snapshot.activeDisplayIDs.contains(savedBuiltInDisplayID) {
             candidates.append(savedBuiltInDisplayID)
         }
 
-        if let fallbackDisplayID = snapshot.fallbackDisplayID {
+        if let fallbackDisplayID = snapshot.fallbackDisplayID,
+           !snapshot.activeDisplayIDs.contains(fallbackDisplayID) {
             candidates.append(fallbackDisplayID)
         }
 
-        candidates.append(contentsOf: snapshot.builtInFallbackDisplayIDs)
+        candidates.append(contentsOf: snapshot.builtInFallbackDisplayIDs.filter {
+            !snapshot.activeDisplayIDs.contains($0)
+        })
 
         return candidates.uniqued()
     }
@@ -59,4 +63,3 @@ private extension Array where Element: Hashable {
         return filter { seen.insert($0).inserted }
     }
 }
-

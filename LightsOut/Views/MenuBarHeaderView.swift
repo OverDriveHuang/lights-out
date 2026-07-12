@@ -5,7 +5,7 @@ struct MenuBarHeader: View {
     @EnvironmentObject var viewModel: DisplaysViewModel
     
     var body: some View {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let commitID = Bundle.main.object(forInfoDictionaryKey: "GitCommit") as? String
         
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "display.2")
@@ -17,15 +17,16 @@ struct MenuBarHeader: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.primary)
                 
-                Text(version ?? "1")
+                Text(commitID.map { "Commit \($0)" } ?? "Commit unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
 
             HStack(spacing: 8) {
                 Button {
                     isLoading = true
-                    viewModel.fetchDisplays()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    viewModel.fetchDisplays {
                         isLoading = false
                     }
                 } label: {

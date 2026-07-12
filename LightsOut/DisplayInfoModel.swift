@@ -13,6 +13,9 @@ class DisplayInfo: ObservableObject, Identifiable, Hashable {
     let name: String
     var isPrimary: Bool
     let isBuiltIn: Bool
+    @Published var persistentIdentity: PersistentDisplayIdentity?
+    @Published var displayClassification: DisplayClassification
+    @Published var classificationEvidence: DisplayClassificationEvidence
     @Published var isUserHidden: Bool
     @Published var isAvailable: Bool
     @Published var state: DisplayState
@@ -24,7 +27,10 @@ class DisplayInfo: ObservableObject, Identifiable, Hashable {
         isPrimary: Bool,
         isBuiltIn: Bool,
         isUserHidden: Bool = false,
-        isAvailable: Bool = true
+        isAvailable: Bool = true,
+        displayClassification: DisplayClassification? = nil,
+        classificationEvidence: DisplayClassificationEvidence? = nil,
+        persistentIdentity: PersistentDisplayIdentity? = nil
     ) {
         self.id = id
         self.name = name
@@ -33,6 +39,9 @@ class DisplayInfo: ObservableObject, Identifiable, Hashable {
         self.isBuiltIn = isBuiltIn
         self.isUserHidden = isUserHidden
         self.isAvailable = isAvailable
+        self.displayClassification = displayClassification ?? (isBuiltIn ? .physical : .unknown)
+        self.classificationEvidence = classificationEvidence ?? (isBuiltIn ? .builtIn : .insufficientEvidence)
+        self.persistentIdentity = persistentIdentity
     }
     
     func hash(into hasher: inout Hasher) {
